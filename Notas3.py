@@ -1,56 +1,55 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+import os
 
-def check_password():
-    """Retorna True se a senha inserida estiver correta e armazena o nome de usuário."""
-    def password_entered():
-        """Verifica se a senha está correta e atualiza o estado de login."""
-        if st.session_state["username"] in st.secrets["users"] and \
-           st.session_state["password"] == st.secrets["users"][st.session_state["username"]]:
-            st.session_state["password_correct"] = True
-            st.session_state["logged_in_user"] = st.session_state["username"]  # Armazena o nome de usuário
-            del st.session_state["password"]  # Não armazene a senha na sessão
-        else:
-            st.session_state["password_correct"] = False
+# Função para carregar os dados (agora com tratamento de cache)
+@st.cache_data
+def carregar_dados():
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.join(script_dir, "DATA.csv")
+        return pd.read_csv(csv_path)
+    except FileNotFoundError:
+        st.error("O arquivo DATA.csv não foi encontrado.")
+        st.stop()
 
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
+# Carrega os dados usando a função cacheada
+if 'documentos' not in st.session_state:
+    st.session_state['documentos'] = carregar_dados()
 
-    if not st.session_state["password_correct"]:
-        usernames = list(st.secrets["users"].keys())
-        st.title("Login :smile_cat:")
-        username = st.selectbox("Selecione seu nome de usuário:", usernames, key="username")
-        password = st.text_input("Senha:", type="password", on_change=password_entered, key="password")
-        if st.session_state["password_correct"] is False:
-            st.error("Senha incorreta para o usuário selecionado")
-        return False
-    else:
-        return True
+documentos = st.session_state['documentos']
 
-if check_password():
-    st.title("CONTROLE DE NOTAS :sunglasses:")
+# Garante que a coluna 'Data_Assinatura' seja do tipo datetime
+documentos['Data_Assinatura'] = pd.to_datetime(documentos['Data_Assinatura'], errors='coerce')
 
-    # Recupera o nome de usuário logado
-    logged_in_user = st.session_state.get("logged_in_user")
+st.title("Assinatura de Documentos")
 
-    Arquivo = "https://docs.google.com/spreadsheets/d/1Lpjc8Zb9_P8vZjt8pjjft66LpGqTE4g7uUy0hlOnUO8/export?format=csv"
-    df = pd.read_csv(Arquivo)
+st.write("Selecione os documentos para assinar:")
+documentos_selecionados = st.data_editor(documentos.copy(), num_rows="dynamic", key="data_editor") # Adicionamos uma key ao data_editor
 
-    if logged_in_user:
-        # Filtra o DataFrame com base no usuário logado (assumindo que há uma coluna 'Responsável' ou similar)
-        # Adapte o nome da coluna ('Responsável') para o nome correto na sua planilha.
-        coluna_responsavel = 'GESTOR_RESP'  # Substitua pelo nome da sua coluna de responsável
-        df_filtrado = df[df[coluna_responsavel] == logged_in_user]
-        st.subheader(f"Dados de {logged_in_user}")
-        edited_df = st.data_editor(df_filtrado)
+if st.button("Selecionar Documentos para Assinar"):
+    documentos_para_assinar = documentos_selecionados[(documentos_selecionados['Assinatura'] == True) & (documentos_selecionados['Data_Assinatura'].isna())].copy()
+    if not documentos_para_assinar.empty:
+        st.text('Documentos que serão assinados:')
+        documentos_para_assinar['Data_Assinatura'] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        st.dataframe(documentos_para_assinar)
 
-        if st.button("Salvar Alterações"):
+        if st.button("Confirmar Assinatura"):
             try:
-                # Aqui, a lógica de salvamento precisa considerar que você está editando uma parte filtrada dos dados.
-                # Uma abordagem simples (mas potencialmente com os problemas mencionados anteriormente) é salvar o edited_df de volta.
-                edited_df.to_csv(Arquivo, index=False)
-                st.success("As alterações foram salvas com sucesso!")
+                for index, row in documentos_para_assinar.iterrows():
+                    st.session_state['documentos'].loc[st.session_state['documentos']['Documentos'] == row['Documentos'], 'Data_Assinatura'] = row['Data_Assinatura']
+                    st.session_state['documentos'].loc[st.session_state['documentos']['Documentos'] == row['Documentos'], 'Assinatura'] = True
+
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                csv_path = os.path.join(script_dir, "DATA.csv")
+                st.session_state['documentos'].to_csv(csv_path, index=False)
+                st.success("Documentos assinados e arquivo atualizado com sucesso!")
+
+                # Atualiza a exibição do data_editor
+                st.session_state['documentos'] = pd.read_csv(csv_path) # Recarrega os dados
+                st.experimental_rerun() # Força uma reexecução do script para atualizar a interface
             except Exception as e:
-                st.error(f"Ocorreu um erro ao salvar as alterações: {e}")
+                st.error(f"Ocorreu um erro ao salvar o arquivo: {e}")
     else:
-        st.warning("Nome de usuário não encontrado após o login.")
+        st.warning("Nenhum documento selecionado para assinatura.")
